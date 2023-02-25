@@ -175,6 +175,14 @@ app.post('/api/agreement/delete', async (req, res) => {
     res.sendStatus(200);
 });
 
+app.post('/api/product/delete', async (req, res) => {
+    let product_id = req.body.product_id;
+
+    await db('products').where({product_id}).del();
+
+    res.sendStatus(200);
+});
+
 app.listen(port, () => {
     console.log(`Example app listening on port ${port}`);
 });
