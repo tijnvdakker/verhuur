@@ -13,10 +13,10 @@ app.get('/api/products', async (req, res) => {
     let today = dateStringHelper.today();
 
     let products = await db('products as p')
-                            .select('p.*', db.raw('COALESCE(SUM(s.mutation), 0) as total_stock'))
-                            .leftJoin(
-                                db.raw(`stock as s ON s.product_id = p.product_id AND '${today}' >= COALESCE(s.date_start, '0000-00-00') AND '${today}' < COALESCE(s.date_end, '9999-99-99')`))
-                            .groupBy('p.product_id');
+        .select('p.*', db.raw('COALESCE(SUM(s.mutation), 0) as total_stock'))
+        .leftJoin(
+            db.raw(`stock as s ON s.product_id = p.product_id AND '${today}' >= COALESCE(s.date_start, '0000-00-00') AND '${today}' < COALESCE(s.date_end, '9999-99-99')`))
+        .groupBy('p.product_id');
 
     res.json({ products });
 });
@@ -45,8 +45,25 @@ app.post('/api/product/update_label', async (req, res) => {
     res.sendStatus(200);
 });
 
+app.post('/api/product/update_price', async (req, res) => {
+    let price = req.body.price;
+    let product_id = req.body.product_id;
+
+    await db('products').update({ price }).where({ product_id });
+
+    res.sendStatus(200);
+});
+
 app.get('/api/agreement', async (req, res) => {
-    let agreements = await db.select('*').from('agreements');
+    let agreements = await db.select('a.*', db.raw('SUM(s.mutation * -1 * p.price) as price'), db.raw("GROUP_CONCAT(CONCAT('stock_id:', s.stock_id, '|', 'name:', p.name, '|', 'amount:', s.mutation * -1, '|', 'price:', p.price, '|', 'subtotal:', p.price * s.mutation * -1, '|', 'date_start:', DATE_FORMAT(s.date_start, '%Y-%m-%d'), '|', 'date_end:', DATE_FORMAT(s.date_end, '%Y-%m-%d'))) AS agreement_products"))
+        .from('agreements as a')
+        .leftJoin('stock as s', 's.agreement_id', 'a.agreement_id')
+        .leftJoin('products as p', 'p.product_id', 's.product_id')
+        .groupBy('a.agreement_id')
+        .orderBy('a.description', 'p.name');
+
+    console.log(agreements);
+
     res.json({ agreements });
 });
 
@@ -74,24 +91,11 @@ app.post('/api/agreement/update_description', async (req, res) => {
     res.sendStatus(200);
 });
 
-app.get('/api/agreement/products/:agreement_id', async (req, res) => {
-    let agreement_id = req.params.agreement_id;
-
-    let agreement_products = await
-        db('stock as s')
-            .join('agreements as a', 's.agreement_id', 'a.agreement_id')
-            .leftJoin('products as p', 'p.product_id', 's.product_id')
-            .select(db.raw('s.stock_id, p.name, s.mutation * -1 as amount, DATE_FORMAT(s.date_start, "%Y-%m-%d") AS date_start, DATE_FORMAT(s.date_end, "%Y-%m-%d") AS date_end'))
-            .where('a.agreement_id', agreement_id);
-
-    res.json({ agreement_products });
-});
-
 app.post('/api/agreement/add_product', async (req, res) => {
     let agreement_id = req.body.agreement_id;
     let product_id = req.body.product_id;
 
-    await db('stock').insert({ agreement_id, product_id, mutation: -1, date_start: new Date().toISOString().split('T')[0], date_end: new Date().toISOString().split('T')[0] });
+    await db('stock').insert({ agreement_id, product_id, mutation: -1, date_start: dateStringHelper.today(), date_end: dateStringHelper.today(1) });
 
     res.sendStatus(200);
 });
@@ -164,13 +168,13 @@ app.post('/api/agreement/product/update_amount', async (req, res) => {
 });
 
 app.post('/api/agreement/delete', async (req, res) => {
-    let agreement_id = req.body.agreement_id; 
+    let agreement_id = req.body.agreement_id;
 
     //Delete all the linked products to this agreement
-    await db('stock').where({agreement_id}).del();
+    await db('stock').where({ agreement_id }).del();
 
     //Delete the agreement
-    await db('agreements').where({agreement_id}).del();
+    await db('agreements').where({ agreement_id }).del();
 
     res.sendStatus(200);
 });
@@ -178,7 +182,7 @@ app.post('/api/agreement/delete', async (req, res) => {
 app.post('/api/product/delete', async (req, res) => {
     let product_id = req.body.product_id;
 
-    await db('products').where({product_id}).del();
+    await db('products').where({ product_id }).del();
 
     res.sendStatus(200);
 });
