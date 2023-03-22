@@ -13,12 +13,10 @@ app.get('/api/products', async (req, res) => {
     let today = dateStringHelper.today();
 
     let products = await db('products as p')
-        .select('p.*', db.raw('COALESCE(pg.color, "#cccccc") as color'), db.raw('COALESCE(SUM(s.mutation), 0) as current_stock'), db.raw('COALESCE(SUM(ss.mutation), 0) as total_stock'))
+        .select('p.*', db.raw('COALESCE(pg.color, "#cccccc") as color'), db.raw('COALESCE(SUM(s.mutation), 0) as current_stock'), db.raw('(SELECT COALESCE(SUM(ss.mutation), 0) FROM stock as ss WHERE ss.product_id = p.product_id AND ss.agreement_id IS NULL) as total_stock'))
         .leftJoin('product_groups as pg', 'p.product_group_id', 'pg.product_group_id')
         .leftJoin(
             db.raw(`stock as s ON s.product_id = p.product_id AND '${today}' >= COALESCE(s.date_start, '0000-00-00') AND '${today}' < COALESCE(s.date_end, '9999-99-99')`))
-        .leftJoin(
-            db.raw(`stock as ss ON ss.product_id = p.product_id AND ss.agreement_id IS NULL`))
         .groupBy('p.product_id');
 
     res.json({ products });
@@ -142,17 +140,26 @@ app.post('/api/agreement/add_product', async (req, res) => {
     res.sendStatus(200);
 });
 
-app.get('/api/stock/total/:product_group_id', async (req, res) => {
+app.get('/api/stock/total/:product_group_id/:product_id', async (req, res) => {
     let today = dateStringHelper.today();
 
     let todayMinusDays = dateStringHelper.today(-90);
 
     let product_group_id = req.params.product_group_id;
+    let product_id = req.params.product_id;
+
+    console.log(product_group_id, product_id);
 
     //Geen filter applyen
     if (product_group_id == 0) {
         product_group_id = "%%";
     }
+
+    if (product_id == 0) {
+        product_id = "%%";
+    }
+
+    console.log(product_id, product_group_id);
 
     let stockData = await db.raw(`WITH RECURSIVE dates AS (
                                     SELECT '${todayMinusDays}' AS _day_ 
@@ -163,7 +170,7 @@ app.get('/api/stock/total/:product_group_id', async (req, res) => {
                                 ) 
                                 
                                 SELECT DATE_FORMAT(d._day_, "%Y-%m-%d") AS stock_date, 
-                                (SELECT COALESCE(SUM(s.mutation), 0) FROM stock AS s JOIN products as p ON s.product_id = p.product_id WHERE d._day_ >= COALESCE(s.date_start, '0000-00-00') AND d._day_ < COALESCE(s.date_end, '9999-99-99') AND p.product_group_id LIKE '${product_group_id}') AS total_stock 
+                                (SELECT COALESCE(SUM(s.mutation), 0) FROM stock AS s JOIN products as p ON s.product_id = p.product_id WHERE d._day_ >= COALESCE(s.date_start, '0000-00-00') AND d._day_ < COALESCE(s.date_end, '9999-99-99') AND p.product_group_id LIKE '${product_group_id}' AND p.product_id LIKE '${product_id}') AS total_stock 
                                 FROM dates AS d`);
 
     //Raw KNEX query, the first index is the result of the query
@@ -175,8 +182,9 @@ app.get('/api/stock/total/:product_group_id', async (req, res) => {
 app.post('/api/stock/add_mutation', async (req, res) => {
     let product_id = req.body.product_id;
     let mutation = req.body.mutation;
+    let description = req.body.description;
 
-    await db('stock').insert({ product_id, mutation });
+    await db('stock').insert({ product_id, mutation, description: description });
 
     res.sendStatus(200);
 });
@@ -211,6 +219,17 @@ app.post('/api/agreement/product/update_amount', async (req, res) => {
     let stock_id = req.body.stock_id;
     let amount = req.body.amount;
 
+    let today = dateStringHelper.today();
+
+    let result = await db.raw(`SELECT SUM(s.mutation) AS current_stock FROM stock as ss LEFT JOIN stock as s ON s.product_id = ss.product_id AND s.stock_id <> ss.stock_id AND '${today}' >= COALESCE(s.date_start, '0000-00-00') AND '${today}' < COALESCE(s.date_end, '9999-99-99') WHERE ss.stock_id = ${stock_id} `);
+
+    //Raw KNEX query, the first index is the result of the query
+    result = result[0][0];
+
+    if (amount > result.current_stock) {
+        return res.status(400).send("Er is op dit moment niet genoeg voorraad om dit aantal producten te bestellen!");
+    }
+
     await db('stock').update({ mutation: db.raw(amount * -1) }).where({ stock_id });
 
     res.sendStatus(200);
@@ -242,6 +261,14 @@ app.post('/api/product/group/delete', async (req, res) => {
     await db('product_groups').where({ product_group_id }).del();
 
     res.sendStatus(200);
+});
+
+app.get('/api/stock/history/:product_id', async (req, res) => {
+    let product_id = req.params.product_id;
+
+    let history = await db('stock as s').select('s.*', db.raw('COALESCE(s.description, a.description, "Geen omschrijving") as description')).leftJoin('agreements as a', 'a.agreement_id', 's.agreement_id').where('product_id', product_id);
+
+    res.json({history});
 });
 
 app.listen(port, () => {
