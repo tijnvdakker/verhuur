@@ -59,6 +59,10 @@ app.post('/api/product/update_linked_product_group', async (req, res) => {
     let product_group_id = req.body.product_group_id;
     let product_id = req.body.product_id;
 
+    if (product_group_id == 0) {
+        product_group_id = null;
+    }
+
     await db('products').update({ product_group_id }).where({ product_id });
 
     res.sendStatus(200);
@@ -94,21 +98,46 @@ app.post('/api/product/group/update_color', async (req, res) => {
     res.sendStatus(200);
 });
 
-app.get('/api/agreement', async (req, res) => {
-    let agreements = await db.select('a.*', db.raw('SUM(s.mutation * -1 * p.price) as price'), db.raw("GROUP_CONCAT(CONCAT('stock_id:', s.stock_id, '|', 'name:', p.name, '|', 'amount:', s.mutation * -1, '|', 'price:', p.price, '|', 'subtotal:', p.price * s.mutation * -1, '|', 'date_start:', DATE_FORMAT(s.date_start, '%Y-%m-%d'), '|', 'date_end:', DATE_FORMAT(s.date_end, '%Y-%m-%d'))) AS agreement_products"))
+app.get('/api/agreement/:client_id/:product_id', async (req, res) => {
+    let client_id = req.params.client_id;
+    let product_id = req.params.product_id;
+
+    if (client_id == 0) {
+        client_id = "%%";
+    }
+
+    if (product_id == 0) {
+        product_id = "%%";
+    }
+
+    let agreements = await db.select('a.*', 'c.name as client', db.raw('SUM(s.mutation * -1 * p.price) as price'), db.raw("GROUP_CONCAT(CONCAT('stock_id:', s.stock_id, '|', 'name:', p.name, '|', 'amount:', s.mutation * -1, '|', 'price:', p.price, '|', 'subtotal:', p.price * s.mutation * -1, '|', 'date_start:', DATE_FORMAT(s.date_start, '%Y-%m-%d'), '|', 'date_end:', DATE_FORMAT(s.date_end, '%Y-%m-%d'))) AS agreement_products"))
         .from('agreements as a')
         .leftJoin('stock as s', 's.agreement_id', 'a.agreement_id')
         .leftJoin('products as p', 'p.product_id', 's.product_id')
+        .leftJoin('clients as c', 'c.client_id', 'a.client_id')
         .groupBy('a.agreement_id')
-        .orderBy('a.description', 'p.name');
-
-    console.log(agreements);
+        .orderBy('a.description', 'p.name')
+        .where(db.raw(`c.client_id LIKE '${client_id}'`))
+        .where(db.raw(`p.product_id LIKE '${product_id}'`));
 
     res.json({ agreements });
 });
 
 app.post('/api/agreement/add', async (req, res) => {
-    await db('agreements').insert({ description: "Geen naam", deposit: 0, client_id: 1, admin_id: 1 });
+    await db('agreements').insert({ description: "Geen naam", deposit: 0 });
+
+    res.sendStatus(200);
+});
+
+app.post('/api/agreement/link_client', async (req, res) => {
+    let client_id = req.body.client_id;
+    let agreement_id = req.body.agreement_id;
+
+    if (client_id == 0) {
+        client_id = null;
+    }
+
+    await db('agreements').update({client_id}).where({agreement_id});
 
     res.sendStatus(200);
 });
@@ -134,6 +163,10 @@ app.post('/api/agreement/update_description', async (req, res) => {
 app.post('/api/agreement/add_product', async (req, res) => {
     let agreement_id = req.body.agreement_id;
     let product_id = req.body.product_id;
+
+    if (product_id == 0) {
+        return res.status(400).send("Kies een product om toe te voegen!");
+    }
 
     await db('stock').insert({ agreement_id, product_id, mutation: -1, date_start: dateStringHelper.today(), date_end: dateStringHelper.today(1) });
 
@@ -269,6 +302,63 @@ app.get('/api/stock/history/:product_id', async (req, res) => {
     let history = await db('stock as s').select('s.*', db.raw('COALESCE(s.description, a.description, "Geen omschrijving") as description')).leftJoin('agreements as a', 'a.agreement_id', 's.agreement_id').where('product_id', product_id);
 
     res.json({history});
+});
+
+app.get('/api/clients', async (req, res) => {
+   
+    let clients = await db('clients').select('*');
+
+    res.json({ clients });
+});
+
+app.post('/api/client/add', async (req, res) => {
+    await db('clients').insert({ name: "Nieuw", email: "test@test.nl", phone: "0612345678", address: "Teststraat 1" });
+
+    res.sendStatus(200);
+});
+
+app.post('/api/client/update_name', async (req, res) => {
+    let name = req.body.name;
+    let client_id = req.body.client_id;
+
+    await db('clients').update({ name }).where({ client_id });
+
+    res.sendStatus(200);
+});
+
+app.post('/api/client/update_email', async (req, res) => {
+    let email = req.body.email;
+    let client_id = req.body.client_id;
+
+    await db('clients').update({ email }).where({ client_id });
+
+    res.sendStatus(200);
+});
+
+app.post('/api/client/update_phone', async (req, res) => {
+    let phone = req.body.phone;
+    let client_id = req.body.client_id;
+
+    await db('clients').update({ phone }).where({ client_id });
+
+    res.sendStatus(200);
+});
+
+app.post('/api/client/update_address', async (req, res) => {
+    let address = req.body.address;
+    let client_id = req.body.client_id;
+
+    await db('clients').update({ address }).where({ client_id });
+
+    res.sendStatus(200);
+});
+
+app.post('/api/client/delete', async (req, res) => {
+    let client_id = req.body.client_id;
+
+    await db('clients').where({ client_id }).del();
+
+    res.sendStatus(200);
 });
 
 app.listen(port, () => {
